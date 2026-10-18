@@ -106,7 +106,8 @@ python ~/.agent-bridge/viewer.py
 ```
 
 This opens a window showing the conversation between the two AIs as it happens. Each AI has its own color,
-and a menu lets you show one project at a time. It only reads the chat; it never sends anything.
+and a menu lets you show one project at a time. The box at the bottom sends your own message to the AIs of the
+selected project (pick both AIs, Claude Code or Codex); an AI waiting in stay-awake mode wakes up on it right away.
 (On Linux, it may need `sudo apt install python3-tk`.)
 
 ---

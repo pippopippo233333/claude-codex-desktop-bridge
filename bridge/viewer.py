@@ -2,11 +2,13 @@
 
   python ~/.agent-bridge/viewer.py
 
-Read-only: it only reads the bridge's chat file and never sends anything. Pick a project in the menu to
-see only its messages. Uses tkinter, which comes with Python (on Linux you may need: sudo apt install python3-tk).
+Pick a project in the menu to see only its messages. The box at the bottom sends your own message to the
+AIs of that project (labelled "From User"); with "All projects" selected it goes to every project.
+Uses tkinter, which comes with Python (on Linux you may need: sudo apt install python3-tk).
 """
 import json
 import os
+import sys
 import tkinter as tk
 from pathlib import Path
 from tkinter import font as tkfont
@@ -32,6 +34,18 @@ COLORS = {
 # one color per project (stripe on the left + label)
 PROJECT_PALETTE = ["#BA68C8", "#4DB6AC", "#F06292", "#AED581", "#7986CB",
                    "#FFD54F", "#4DD0E1", "#FF8A65", "#90A4AE", "#DCE775"]
+RECIPIENTS = {"Both AIs": "all", "Claude Code": "claude", "Codex": "codex"}
+
+
+def post_as_user(text, to, room, folder):
+    """Post a message as the user through bridge.py (it sits next to this file, or next to the data folder)."""
+    for here in (Path(__file__).resolve().parent, DATA_DIR.parent):
+        if (here / "bridge.py").exists():
+            if str(here) not in sys.path:
+                sys.path.insert(0, str(here))
+            break
+    import bridge
+    return bridge.post("user", text, to=to, room=room, folder=folder)
 
 
 def display(name):
@@ -131,10 +145,49 @@ class ChatViewer(tk.Tk):
         self.text.tag_configure("status", foreground=COLORS["meta"],
                                 font=("Consolas", 9, "italic"))
 
-        self.status = tk.Label(self, text="Listening…", anchor="w",
+        # send box: your own message to the AIs of the selected project
+        compose = tk.Frame(self, bg=COLORS["bg"])
+        compose.pack(side="bottom", fill="x", padx=10, pady=(0, 4))
+        self.entry = tk.Text(compose, height=3, wrap="word", bg="#111", fg=COLORS["fg"],
+                             insertbackground=COLORS["fg"], font=("Consolas", 10),
+                             relief="flat", padx=8, pady=6)
+        self.entry.pack(side="left", fill="x", expand=True)
+        self.entry.bind("<Return>", self._on_enter)
+        side = tk.Frame(compose, bg=COLORS["bg"])
+        side.pack(side="right", padx=(8, 0))
+        self.to_var = tk.StringVar(value="Both AIs")
+        ttk.Combobox(side, textvariable=self.to_var, state="readonly", width=12,
+                     values=list(RECIPIENTS)).pack(fill="x")
+        tk.Button(side, text="Send", command=self._send, bg="#2E7D32", fg="#FFFFFF",
+                  relief="flat", padx=10).pack(fill="x", pady=(4, 0))
+        self.status = tk.Label(self, text="Listening…  (Enter sends, Shift+Enter adds a new line)", anchor="w",
                                fg=COLORS["meta"], bg=COLORS["bg"],
                                font=("Segoe UI", 9))
-        self.status.pack(fill="x", padx=12, pady=(0, 8))
+        self.status.pack(side="bottom", fill="x", padx=12, pady=(0, 8))
+        body.pack_forget()
+        body.pack(fill="both", expand=True, padx=10, pady=(0, 6))
+
+    def _on_enter(self, event):
+        if event.state & 0x1:       # Shift+Enter: new line
+            return None
+        self._send()
+        return "break"
+
+    def _send(self):
+        text = self.entry.get("1.0", "end").strip()
+        if not text:
+            return
+        to = RECIPIENTS.get(self.to_var.get(), "all")
+        room = self.selected if self.selected is not None else EVERYWHERE
+        where = "every project" if room == EVERYWHERE else self._project_name(room)
+        try:
+            folder = "every project" if room == EVERYWHERE else self.folder_case.get(room, room)
+            msg = post_as_user(text, to, room, folder)
+        except Exception as e:      # noqa: BLE001 - show any failure in the window
+            self.status.config(text=f"Not sent: {e}")
+            return
+        self.entry.delete("1.0", "end")
+        self.status.config(text=f"Sent #{msg['id']} to {self.to_var.get()} in {where}.")
 
     # ------------------------------------------------------ projects
     def _load_links(self):
