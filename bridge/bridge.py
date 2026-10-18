@@ -1501,6 +1501,7 @@ def wait_for_message(me, room, other, args, call=None):
             now = time.time()
             if now >= next_mutual_check:
                 next_mutual_check = now + 5
+                check_stopped_waits(other)
                 theirs = waiting_since(other, project_rooms(room))
                 if theirs and now - max(theirs, started) >= MUTUAL_WAIT_SECONDS:
                     return (f"Stopped waiting: {display(other)} is ALSO in wait_for_message on this project, "

@@ -19,6 +19,7 @@ CHAT_FILE = DATA_DIR / "chat.jsonl"
 LINKS_FILE = DATA_DIR / "links.json"   # projects (linked folders) of the bridge
 POLL_MS = 300          # how often to check the chat file
 LINKS_POLL_MS = 2000   # how often to re-check the linked projects
+WAITS_POLL_MS = 3000   # how often to check for a stay-awake wait stopped with Esc
 ALL_PROJECTS = "All projects"
 EVERYWHERE = "*"       # messages sent to every project (e.g. by the user from the command line)
 
@@ -37,15 +38,26 @@ PROJECT_PALETTE = ["#BA68C8", "#4DB6AC", "#F06292", "#AED581", "#7986CB",
 RECIPIENTS = {"Both AIs": "all", "Claude Code": "claude", "Codex": "codex"}
 
 
-def post_as_user(text, to, room, folder):
-    """Post a message as the user through bridge.py (it sits next to this file, or next to the data folder)."""
+def _bridge():
+    """bridge.py, which sits next to this file or next to the data folder."""
     for here in (Path(__file__).resolve().parent, DATA_DIR.parent):
         if (here / "bridge.py").exists():
             if str(here) not in sys.path:
                 sys.path.insert(0, str(here))
             break
     import bridge
-    return bridge.post("user", text, to=to, room=room, folder=folder)
+    return bridge
+
+
+def post_as_user(text, to, room, folder):
+    return _bridge().post("user", text, to=to, room=room, folder=folder)
+
+
+def check_stopped_waits():
+    """Notice an AI whose stay-awake wait was stopped (Esc), even while neither AI is doing anything."""
+    b = _bridge()
+    for who in ("claude", "codex"):
+        b.check_stopped_waits(who)
 
 
 def display(name):
@@ -90,6 +102,15 @@ class ChatViewer(tk.Tk):
         self._initial_load()
         self.after(POLL_MS, self._poll)
         self.after(LINKS_POLL_MS, self._poll_links)
+        self.after(WAITS_POLL_MS, self._poll_waits)
+
+    def _poll_waits(self):
+        try:
+            check_stopped_waits()
+        except Exception:       # noqa: BLE001 - the viewer keeps working without bridge.py
+            pass
+        finally:
+            self.after(WAITS_POLL_MS, self._poll_waits)
 
     # ------------------------------------------------------------- UI
     def _build_ui(self):
