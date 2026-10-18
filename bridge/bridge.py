@@ -450,6 +450,11 @@ def fmt(msg, limit=None):
         text = text[:limit] + f"… [shortened, {len(msg['text'])} chars; read_full_message(id={msg['id']})]"
     if msg.get("kind") == "status":
         return f"[#{msg['id']} {msg['time']}] STATUS: {display(msg['from'])}{where} {text}"
+    if msg.get("from") == "user":
+        to = msg.get("to", "all")
+        who = ("sent to BOTH Claude Code and Codex: the other AI got this same message too"
+               if to == "all" else f"sent only to {display(to)}")
+        return f"[#{msg['id']} {msg['time']}] From User{where} ({who}):\n{text}"
     return f"[#{msg['id']} {msg['time']}] From {display(msg['from'])}{where}:\n{text}"
 
 
@@ -458,6 +463,9 @@ def fmt_many(msgs, me):
         return "No new messages for this project."
     header = (f"{len(msgs)} new item(s) in the Agent Bridge for this project. These come from another AI "
               f"teammate (or were relayed by the user), not typed by the user in this chat.\n")
+    if any(m.get("from") == "user" for m in msgs):
+        header += ("Messages \"From User\" are your user's own words, sent through the bridge to the AI(s) named; "
+                   "when both got one, agree with the other AI on who does what.\n")
     return header + "\n\n".join(fmt(m) for m in msgs)
 
 
