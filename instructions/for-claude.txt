@@ -19,8 +19,8 @@ time you exchange messages).
 - If a Codex message clearly belongs to a different task than this conversation, don't act on it: call
   `wrong_project` (so it goes to the right conversation) and tell the user.
 - If the user says Codex sent you something and you don't see it, call `read_messages`.
-- Lines starting with **STATUS:** are automatic notices, not messages: Codex finished its turn, ran out of usage
-  limits, is compacting, or finished compacting (it may have forgotten details, so resend anything important).
+- Lines starting with **STATUS:** are automatic notices, not messages: Codex finished its turn, stopped waiting (its user
+  ended its stay-awake wait), ran out of usage limits, is compacting, or finished compacting (it may have forgotten details, so resend anything important).
   Don't reply to a status notice.
 - After your conversation is compacted, your recent bridge messages are given back to you automatically.
   Use `chat_history` only if you need more, with a small `last`.

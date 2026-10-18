@@ -588,6 +588,56 @@ def presence_entry(who, room):
     return max(pick, key=lambda e: e.get("updated", 0)) if pick else None
 
 
+def _pid_alive(pid):
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if os.name == "nt":
+        import ctypes
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(0x1000, False, pid)     # PROCESS_QUERY_LIMITED_INFORMATION
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            return bool(k.GetExitCodeProcess(h, ctypes.byref(code))) and code.value == 259    # STILL_ACTIVE
+        finally:
+            k.CloseHandle(h)
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def check_stopped_waits(who):
+    """A stay-awake wait whose hook process is gone was stopped by its user (Esc / stop button):
+    mark that conversation idle and tell the other AI, once."""
+    for path in PRESENCE_DIR.glob(f"{who}-*.json"):
+        d = _read_json(path, None)
+        if not d or d.get("state") != "stay_waiting" or not d.get("stay_pid") or _pid_alive(d["stay_pid"]):
+            continue
+        fd = _lock()
+        try:
+            d = _read_json(path, None)      # re-check under the lock so only one checker reports it
+            if not d or d.get("state") != "stay_waiting" or not d.get("stay_pid") or _pid_alive(d["stay_pid"]):
+                continue
+            update_presence(who, d.get("sid"), state="idle", turn_ended=time.time(), stay_until=None,
+                            stay_pid=None)
+        finally:
+            _unlock(fd)
+        sid = d.get("sid")
+        sessions = load_sessions(who)
+        if sessions.get(sid, {}).pop("stay_since", None):
+            save_sessions(who, sessions)
+        room = (sessions.get(sid) or {}).get("room") or room_key(d.get("folder"))
+        post(who, "stopped waiting: its user ended its turn, so it's idle now and won't see your messages "
+                  "until its user prompts it.", kind="status", folder=d.get("folder"), room=room)
+
+
 def presence_summary(who, room):
     """One or two sentences on what `who` (codex/claude) is doing on the project of `room`."""
     name = display(who)
@@ -930,12 +980,12 @@ def stay_awake(me, sid, room, folder, sessions, now, stop_continued):
         # typed meanwhile only at the next step, so a short step keeps the user's messages coming through.
         deadline = min(now + STAY_STEP_SECONDS, since + STAY_MAX_SECONDS)
         update_presence(me, sid, state="stay_waiting", turn_ended=now, tool_running=None,
-                        stay_until=since + STAY_MAX_SECONDS, folder=folder)
+                        stay_until=since + STAY_MAX_SECONDS, stay_pid=os.getpid(), folder=folder)
         if first:
             post(me, "finished its turn but is waiting for your message (stay-awake mode): whatever you send "
                      "next wakes it automatically, so you don't need its user.", kind="status", folder=folder,
                  room=room)
-        last_seen = None
+        last_seen, next_check = None, now + 5
         while not unread:
             try:
                 st = CHAT_FILE.stat()
@@ -948,11 +998,15 @@ def stay_awake(me, sid, room, folder, sessions, now, stop_continued):
                 if unread:
                     break
             t = time.time()
+            if t >= next_check:
+                next_check = t + 5
+                check_stopped_waits(other)
             if t >= deadline:
                 if t - since >= STAY_MAX_SECONDS:
                     return None     # waited the full time: end the turn
                 # One tiny step so a message the user typed meanwhile is delivered; the next Stop of
-                # this turn comes straight back here.
+                # this turn comes straight back here. No process is waiting during that step.
+                update_presence(me, sid, stay_pid=None)
                 return {"decision": "block", "reason": (
                     "[agent-bridge stay-awake] Still waiting, nothing new. If your user sent you a message, "
                     "answer it; otherwise end your turn now with no text and no tool calls.")}
@@ -963,7 +1017,7 @@ def stay_awake(me, sid, room, folder, sessions, now, stop_continued):
         sessions[sid]["stay_since"] = time.time()
         save_sessions(me, sessions)
     update_presence(me, sid, state="working", turn_started=time.time(), tool_running=None, stay_until=None,
-                    folder=folder)
+                    stay_pid=None, folder=folder)
     return {"decision": "block", "reason": (
         f"<agent-bridge>\n{fmt_many(unread, me)}\n</agent-bridge>\n"
         f"Your turn was continued automatically (stay-awake mode, which your user turned on for this project) "
@@ -980,6 +1034,9 @@ def handle_hook(me, payload):
     now = time.time()
     sessions = load_sessions(me)
     room = hook_room(folder, (sessions.get(sid) or {}).get("room"), me)
+    for who in (me, OTHER.get(me, "codex")):
+        check_stopped_waits(who)
+    sessions = load_sessions(me)
     active = bool(sid and (sessions.get(sid) or {}).get("active_at"))
     # A chat that followed its tools to another project (remember_follow) belongs to that project now.
     if active and not _inside(room_key(folder), room) and sessions[sid].get("room") != room:
@@ -1466,6 +1523,7 @@ def call_tool(me, name, args, call=None):
     if args.get("project_folder"):
         remember_follow(me, room)
     other = OTHER.get(me, "claude")
+    check_stopped_waits(other)
     if name == "send_message":
         text = (args.get("text") or "").strip()
         if not text:
