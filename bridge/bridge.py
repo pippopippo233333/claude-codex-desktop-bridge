@@ -642,7 +642,7 @@ def check_stopped_waits(who):
         if sessions.get(sid, {}).pop("stay_since", None):
             save_sessions(who, sessions)
         room = (sessions.get(sid) or {}).get("room") or room_key(d.get("folder"))
-        post(who, "stopped waiting: its user ended its turn, so it's idle now and won't see your messages "
+        post(who, "stopped waiting (its user ended its turn, or its app closed or restarted), so it's idle now and won't see your messages "
                   "until its user prompts it.", kind="status", folder=d.get("folder"), room=room)
 
 
